@@ -44,6 +44,20 @@ struct Point
 	float restlength[4];	// initial distance to neighbours
 };
 
+// Current point positions
+static union { float pos_x[GRIDSIZE * GRIDSIZE]; __m128 pos_x4[GRIDSIZE * GRIDSIZE / 4]; };
+static union { float pos_y[GRIDSIZE * GRIDSIZE]; __m128 pos_y4[GRIDSIZE * GRIDSIZE / 4]; };
+// Previous point positions
+static union { float prev_pos_x[GRIDSIZE * GRIDSIZE]; __m128 prev_pos_x4[GRIDSIZE * GRIDSIZE / 4]; };
+static union { float prev_pos_y[GRIDSIZE * GRIDSIZE]; __m128 prev_pos_y4[GRIDSIZE * GRIDSIZE / 4]; };
+// Stationary positions
+static union { float fix_x[GRIDSIZE * GRIDSIZE]; __m128 fix_x4[GRIDSIZE * GRIDSIZE / 4]; };
+static union { float fix_y[GRIDSIZE * GRIDSIZE]; __m128 fix_y4[GRIDSIZE * GRIDSIZE / 4]; };
+// True for points in the top line of the cloth
+static bool is_fixed[GRIDSIZE * GRIDSIZE];
+// Initial distances to neighbours
+static union { float rest[GRIDSIZE * GRIDSIZE * 4]; __m128 rest4[GRIDSIZE * GRIDSIZE]; };
+
 // grid access convenience
 Point* pointGrid = new Point[GRIDSIZE * GRIDSIZE];
 Point& grid( const uint x, const uint y ) { return pointGrid[x + y * GRIDSIZE]; }
@@ -71,6 +85,29 @@ void Game::Init() {
 			grid( x, y ).restlength[c] = length( grid( x, y ).pos - grid( x + xoffset[c], y + yoffset[c] ).pos ) * 1.15f;
 		}
 	}
+
+	// Conversion to SoA
+	for ( int y = 0; y < GRIDSIZE; y++ ) {
+		for ( int x = 0; x < GRIDSIZE; x++ ) {
+			int idx = x + y * GRIDSIZE;
+
+			pos_x[idx] = grid( x, y ).pos.x;
+			pos_y[idx] = grid( x, y ).pos.y;
+
+			prev_pos_x[idx] = grid( x, y ).prev_pos.x;
+			prev_pos_y[idx] = grid( x, y ).prev_pos.y;
+
+			fix_x[idx] = grid( x, y ).fix.x;
+			fix_y[idx] = grid( x, y ).fix.y;
+
+			is_fixed[idx] = grid( x, y ).fixed;
+
+			rest[idx + 0] = grid( x, y ).restlength[0];
+			rest[idx + 1] = grid( x, y ).restlength[1];
+			rest[idx + 2] = grid( x, y ).restlength[2];
+			rest[idx + 3] = grid( x, y ).restlength[3];
+		}
+	}
 }
 
 // cloth rendering
@@ -80,19 +117,36 @@ void Game::Init() {
 void Game::DrawGrid() {
 	// draw the grid
 	screen->Clear( 0 );
-	for (int y = 0; y < (GRIDSIZE - 1); y++) for (int x = 1; x < (GRIDSIZE - 2); x++) {
+	for ( int y = 0; y < ( GRIDSIZE - 1 ); y++ ) for ( int x = 1; x < ( GRIDSIZE - 2 ); x++ ) {
 		const float2 p1 = grid( x, y ).pos;
 		const float2 p2 = grid( x + 1, y ).pos;
 		const float2 p3 = grid( x, y + 1 ).pos;
 		screen->Line( p1.x, p1.y, p2.x, p2.y, 0xffffff );
 		screen->Line( p1.x, p1.y, p3.x, p3.y, 0xffffff );
 	}
-
-	for (int y = 0; y < (GRIDSIZE - 1); y++) {
+	for ( int y = 0; y < ( GRIDSIZE - 1 ); y++ ) {
 		const float2 p1 = grid( GRIDSIZE - 2, y ).pos;
 		const float2 p2 = grid( GRIDSIZE - 2, y + 1 ).pos;
 		screen->Line( p1.x, p1.y, p2.x, p2.y, 0xffffff );
 	}
+
+	// draw the grid
+	//screen->Clear( 0 );
+	//for (int y = 0; y < (GRIDSIZE - 1); y++) {
+	//	for (int x = 1; x < (GRIDSIZE - 2); x++) {
+	//		int idx1 = x + y * GRIDSIZE;
+	//		int idx2 = ( x + 1 ) + y * GRIDSIZE;
+	//		int idx3 = x + ( y + 1 ) * GRIDSIZE;
+	//		screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx2], pos_y[idx2], 0xffffff );
+	//		screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx3], pos_y[idx3], 0xffffff );
+	//	}
+	//}
+
+	//for (int y = 0; y < (GRIDSIZE - 1); y++) {
+	//	int idx1 = ( GRIDSIZE - 2 ) + y * GRIDSIZE;
+	//	int idx2 = ( GRIDSIZE - 2 ) + ( y + 1 ) * GRIDSIZE;
+	//	screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx2], pos_y[idx2], 0xffffff );
+	//}
 }
 
 // cloth simulation
@@ -102,22 +156,66 @@ void Game::DrawGrid() {
 // when using SIMD, this will only work if the two vertices are not
 // operated upon simultaneously (in a vector register, or in a warp).
 float magic = 0.11f;
+__m128 gravity4 = _mm_set1_ps( 0.003f );
+__m128 magic_chance4 = _mm_set1_ps( 0.03f );
+__m128 one4 = _mm_set1_ps( 1 );
+__m128 half4 = _mm_set1_ps( 0.5f );
 void Game::Simulation() {
 	// simulation is exected three times per frame; do not change this.
 	for( int steps = 0; steps < 3; steps++ ) {
+		// TODO: task 1 - SIMD-ify this for-loop
 		// verlet integration; apply gravity
-		for (int y = 0; y < GRIDSIZE; y++) {
+		for (int y = 0; y < GRIDSIZE / 4; y++) {
 			for (int x = 0; x < GRIDSIZE; x++) {
-				float2 curpos = grid( x, y ).pos, prevpos = grid( x, y ).prev_pos;
-				grid( x, y ).pos += (curpos - prevpos) + float2( 0, 0.003f ); // gravity
-				grid( x, y ).prev_pos = curpos;
-				if (Rand( 10 ) < 0.03f) grid( x, y ).pos += float2( Rand( 0.02f + magic ), Rand( 0.12f ) );
+				int idx = x + y * GRIDSIZE;
+				//float2 curpos = grid( x, y ).pos;
+				__m128 curr_x4 = pos_x4[idx];
+				__m128 curr_y4 = pos_y4[idx];
+				//float2 prevpos = grid( x, y ).prev_pos;
+				__m128 prev_x4 = prev_pos_x4[idx];
+				__m128 prev_y4 = prev_pos_y4[idx];
+				//grid( x, y ).pos = curpos + ( curpos - prevpos ) + float2( 0, 0.003f ); // gravity
+				pos_x4[idx] = _mm_add_ps( curr_x4, _mm_sub_ps( curr_x4, prev_x4 ) );
+				pos_y4[idx] = _mm_add_ps( _mm_add_ps( curr_y4, _mm_sub_ps( curr_y4, prev_y4 ) ), gravity4 );
+				//grid( x, y ).prev_pos = curpos;
+				prev_pos_x4[idx] = curr_x4;
+				prev_pos_y4[idx] = curr_y4;
+				//if ( Rand( 10 ) < 0.03f ) grid( x, y ).pos += float2( Rand( 0.02f + magic ), Rand( 0.12f ) );
+				// avoid conditional code by using a mask
+				__m128 rand_d = _mm_set_ps( Rand( 10 ), Rand( 10 ), Rand( 10 ), Rand( 10 ) );
+				__m128 mask = _mm_cmplt_ps( rand_d, magic_chance4 );
+				// use the mask to extract what we want to apply from rand_x and rand_y
+				float range = 0.02f + magic;
+				__m128 rand_x = _mm_and_ps( mask, _mm_set_ps( Rand( range ), Rand( range ), Rand( range ), Rand( range ) ) );
+				__m128 rand_y = _mm_and_ps( mask, _mm_set_ps( Rand( 0.12f ), Rand( 0.12f ), Rand( 0.12f ), Rand( 0.12f ) ) );
+				// do the addition
+				pos_x4[idx] = _mm_add_ps( pos_x4[idx], rand_x );
+				pos_y4[idx] = _mm_add_ps( pos_y4[idx], rand_y );
+			}
+		}
+		// verlet integration; apply gravity
+		for ( int y = 0; y < GRIDSIZE; y++ ) for ( int x = 0; x < GRIDSIZE; x++ ) {
+			float2 curpos = grid( x, y ).pos, prevpos = grid( x, y ).prev_pos;
+			grid( x, y ).pos += ( curpos - prevpos ) + float2( 0, 0.003f ); // gravity
+			grid( x, y ).prev_pos = curpos;
+			if ( Rand( 10 ) < 0.03f ) grid( x, y ).pos += float2( Rand( 0.02f + magic ), Rand( 0.12f ) );
+		}
+
+		// slowly increases the chance of anomalies
+		magic += 0.0002f;
+
+		for ( int y = 0; y < GRIDSIZE; y++ ) {
+			for ( int x = 0; x < GRIDSIZE; x++ ) {
+				int idx = x + y * GRIDSIZE;
+				float2 pointPos( pos_x[idx], pos_y[idx] );
+				grid( x, y ).pos = pointPos;
+				float2 prevPos( prev_pos_x[idx], prev_pos_y[idx] );
+				grid( x, y ).prev_pos = prevPos;
 			}
 		}
 
-		magic += 0.0002f; // slowly increases the chance of anomalies
 		// apply constraints; 4 simulation steps: do not change this number.
-		for (int i = 0; i < 4; i++) {
+		for ( int i = 0; i < 4; i++ ) {
 			for ( int y = 1; y < GRIDSIZE - 1; y++ ) {
 				for ( int x = 1; x < GRIDSIZE - 1; x++ ) {
 					float2 pointpos = grid( x, y ).pos;
@@ -142,8 +240,22 @@ void Game::Simulation() {
 					grid( x, y ).pos = pointpos;
 				}
 			}
+
 			// fixed line of points is fixed.
-			for (int x = 0; x < GRIDSIZE; x++) grid( x, 0 ).pos = grid( x, 0 ).fix;
+			for ( int x = 0; x < GRIDSIZE; x++ ) {
+				grid( x, 0 ).pos = grid( x, 0 ).fix;
+			}
+		}
+
+		// temporary fix, make sure the 4 simulation steps are saved properly to the SoA
+		for ( int y = 0; y < GRIDSIZE; y++ ) {
+			for ( int x = 0; x < GRIDSIZE; x++ ) {
+				int idx = x + y * GRIDSIZE;
+				pos_x[idx] = grid( x, y ).pos.x;
+				pos_y[idx] = grid( x, y ).pos.y;
+				prev_pos_x[idx] = grid( x, y ).prev_pos.x;
+				prev_pos_y[idx] = grid( x, y ).prev_pos.y;
+			}
 		}
 	}
 }
