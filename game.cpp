@@ -121,13 +121,13 @@ void Game::DrawGrid() {
 		int idx1 = x + y * GRIDSIZE;
 		int idx2 = ( x + 1 ) + y * GRIDSIZE;
 		int idx3 = x + ( y + 1 ) * GRIDSIZE;
-		screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx2], pos_y[idx2], 0xFFFFFF );
-		screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx3], pos_y[idx3], 0xFFFFFF );
+		screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx2], pos_y[idx2], 0xffffff );
+		screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx3], pos_y[idx3], 0xffffff );
 	}
 	for ( int y = 0; y < ( GRIDSIZE - 1 ); y++ ) {
 		int idx1 = ( GRIDSIZE - 2 ) + y * GRIDSIZE;
 		int idx2 = ( GRIDSIZE - 2 ) + ( y + 1 ) * GRIDSIZE;
-		screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx2], pos_y[idx2], 0xFFFFFF );
+		screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx2], pos_y[idx2], 0xffffff );
 	}
 }
 
