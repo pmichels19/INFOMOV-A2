@@ -118,16 +118,16 @@ void Game::DrawGrid() {
 	// draw the grid
 	screen->Clear( 0 );
 	for ( int y = 0; y < ( GRIDSIZE - 1 ); y++ ) for ( int x = 1; x < ( GRIDSIZE - 2 ); x++ ) {
-		const float2 p1 = grid( x, y ).pos;
-		const float2 p2 = grid( x + 1, y ).pos;
-		const float2 p3 = grid( x, y + 1 ).pos;
-		screen->Line( p1.x, p1.y, p2.x, p2.y, 0xffffff );
-		screen->Line( p1.x, p1.y, p3.x, p3.y, 0xffffff );
+		int idx1 = x + y * GRIDSIZE;
+		int idx2 = ( x + 1 ) + y * GRIDSIZE;
+		int idx3 = x + ( y + 1 ) * GRIDSIZE;
+		screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx2], pos_y[idx2], 0xFFFFFF );
+		screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx3], pos_y[idx3], 0xFFFFFF );
 	}
 	for ( int y = 0; y < ( GRIDSIZE - 1 ); y++ ) {
-		const float2 p1 = grid( GRIDSIZE - 2, y ).pos;
-		const float2 p2 = grid( GRIDSIZE - 2, y + 1 ).pos;
-		screen->Line( p1.x, p1.y, p2.x, p2.y, 0xffffff );
+		int idx1 = ( GRIDSIZE - 2 ) + y * GRIDSIZE;
+		int idx2 = ( GRIDSIZE - 2 ) + ( y + 1 ) * GRIDSIZE;
+		screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx2], pos_y[idx2], 0xFFFFFF );
 	}
 }
 
