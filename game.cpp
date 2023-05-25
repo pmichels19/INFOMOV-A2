@@ -129,24 +129,6 @@ void Game::DrawGrid() {
 		int idx2 = ( GRIDSIZE - 2 ) + ( y + 1 ) * GRIDSIZE;
 		screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx2], pos_y[idx2], 0xFFFFFF );
 	}
-
-	// draw the grid
-	//screen->Clear( 0 );
-	//for (int y = 0; y < (GRIDSIZE - 1); y++) {
-	//	for (int x = 1; x < (GRIDSIZE - 2); x++) {
-	//		int idx1 = x + y * GRIDSIZE;
-	//		int idx2 = ( x + 1 ) + y * GRIDSIZE;
-	//		int idx3 = x + ( y + 1 ) * GRIDSIZE;
-	//		screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx2], pos_y[idx2], 0xffffff );
-	//		screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx3], pos_y[idx3], 0xffffff );
-	//	}
-	//}
-
-	//for (int y = 0; y < (GRIDSIZE - 1); y++) {
-	//	int idx1 = ( GRIDSIZE - 2 ) + y * GRIDSIZE;
-	//	int idx2 = ( GRIDSIZE - 2 ) + ( y + 1 ) * GRIDSIZE;
-	//	screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx2], pos_y[idx2], 0xffffff );
-	//}
 }
 
 // cloth simulation
@@ -163,7 +145,6 @@ __m128 half4 = _mm_set1_ps( 0.5f );
 void Game::Simulation() {
 	// simulation is exected three times per frame; do not change this.
 	for( int steps = 0; steps < 3; steps++ ) {
-		// TODO: task 1 - SIMD-ify this for-loop
 		// verlet integration; apply gravity
 		for (int y = 0; y < GRIDSIZE / 4; y++) {
 			for (int x = 0; x < GRIDSIZE; x++) {
@@ -174,12 +155,12 @@ void Game::Simulation() {
 				//float2 prevpos = grid( x, y ).prev_pos;
 				__m128 prev_x4 = prev_pos_x4[idx];
 				__m128 prev_y4 = prev_pos_y4[idx];
-				//grid( x, y ).pos = curpos + ( curpos - prevpos ) + float2( 0, 0.003f ); // gravity
-				pos_x4[idx] = _mm_add_ps( curr_x4, _mm_sub_ps( curr_x4, prev_x4 ) );
-				pos_y4[idx] = _mm_add_ps( _mm_add_ps( curr_y4, _mm_sub_ps( curr_y4, prev_y4 ) ), gravity4 );
 				//grid( x, y ).prev_pos = curpos;
 				prev_pos_x4[idx] = curr_x4;
 				prev_pos_y4[idx] = curr_y4;
+				//grid( x, y ).pos = curpos + ( curpos - prevpos ) + float2( 0, 0.003f ); // gravity
+				curr_x4 = _mm_add_ps( curr_x4, _mm_sub_ps( curr_x4, prev_x4 ) );
+				curr_y4 = _mm_add_ps( _mm_add_ps( curr_y4, _mm_sub_ps( curr_y4, prev_y4 ) ), gravity4 );
 				//if ( Rand( 10 ) < 0.03f ) grid( x, y ).pos += float2( Rand( 0.02f + magic ), Rand( 0.12f ) );
 				// avoid conditional code by using a mask
 				__m128 rand_d = _mm_set_ps( Rand( 10 ), Rand( 10 ), Rand( 10 ), Rand( 10 ) );
@@ -189,16 +170,9 @@ void Game::Simulation() {
 				__m128 rand_x = _mm_and_ps( mask, _mm_set_ps( Rand( range ), Rand( range ), Rand( range ), Rand( range ) ) );
 				__m128 rand_y = _mm_and_ps( mask, _mm_set_ps( Rand( 0.12f ), Rand( 0.12f ), Rand( 0.12f ), Rand( 0.12f ) ) );
 				// do the addition
-				pos_x4[idx] = _mm_add_ps( pos_x4[idx], rand_x );
-				pos_y4[idx] = _mm_add_ps( pos_y4[idx], rand_y );
+				pos_x4[idx] = _mm_add_ps( curr_x4, rand_x );
+				pos_y4[idx] = _mm_add_ps( curr_y4, rand_y );
 			}
-		}
-		// verlet integration; apply gravity
-		for ( int y = 0; y < GRIDSIZE; y++ ) for ( int x = 0; x < GRIDSIZE; x++ ) {
-			float2 curpos = grid( x, y ).pos, prevpos = grid( x, y ).prev_pos;
-			grid( x, y ).pos += ( curpos - prevpos ) + float2( 0, 0.003f ); // gravity
-			grid( x, y ).prev_pos = curpos;
-			if ( Rand( 10 ) < 0.03f ) grid( x, y ).pos += float2( Rand( 0.02f + magic ), Rand( 0.12f ) );
 		}
 
 		// slowly increases the chance of anomalies
