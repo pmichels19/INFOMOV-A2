@@ -88,6 +88,37 @@ void Game::Init() {
 
 	// Conversion to SoA
 	for ( int y = 0; y < GRIDSIZE; y++ ) {
+		// divide into groups of four, each of size GRIDSIZE / 4
+		// data layout in quadfloats e.g. for idx 2: **[*]*****|**[*]*****|**[*]*****|**[*]*****
+		for ( int x = 0; x < GRIDSIZE / 4; x++ ) {
+			for ( int g = 0; g < 4; g++ ) {
+				int base_idx = x * 4 + y * GRIDSIZE;
+				int soa_idx  = base_idx + g;
+
+				int x_point = x + g * ( GRIDSIZE / 4 );
+				Point& point = grid( x_point, y );
+
+				pos_x[soa_idx] = point.pos.x;
+				pos_y[soa_idx] = point.pos.y;
+
+				prev_pos_x[soa_idx] = point.prev_pos.x;
+				prev_pos_y[soa_idx] = point.prev_pos.y;
+
+				fix_x[soa_idx] = point.fix.x;
+				fix_y[soa_idx] = point.fix.y;
+
+				is_fixed[soa_idx] = point.fixed;
+
+				rest[( base_idx + 0 ) * 4 + g] = point.restlength[0];
+				rest[( base_idx + 1 ) * 4 + g] = point.restlength[1];
+				rest[( base_idx + 2 ) * 4 + g] = point.restlength[2];
+				rest[( base_idx + 3 ) * 4 + g] = point.restlength[3];
+			}
+		}
+	}
+
+	// Conversion to SoA
+	for ( int y = 0; y < GRIDSIZE; y++ ) {
 		for ( int x = 0; x < GRIDSIZE; x++ ) {
 			int idx = x + y * GRIDSIZE;
 
@@ -172,22 +203,21 @@ void Game::Simulation() {
 				// do the addition
 				pos_x4[idx] = _mm_add_ps( curr_x4, rand_x );
 				pos_y4[idx] = _mm_add_ps( curr_y4, rand_y );
+				// copy back to AoS
+				int cidx = ( x + y * GRIDSIZE ) * 4;
+				pointGrid[cidx + 0].pos = float2( pos_x[cidx + 0], pos_y[cidx + 0] );
+				pointGrid[cidx + 1].pos = float2( pos_x[cidx + 1], pos_y[cidx + 1] );
+				pointGrid[cidx + 2].pos = float2( pos_x[cidx + 2], pos_y[cidx + 2] );
+				pointGrid[cidx + 3].pos = float2( pos_x[cidx + 3], pos_y[cidx + 3] );
+				pointGrid[cidx + 0].prev_pos = float2( prev_pos_x[cidx + 0], prev_pos_y[cidx + 0] );
+				pointGrid[cidx + 1].prev_pos = float2( prev_pos_x[cidx + 1], prev_pos_y[cidx + 1] );
+				pointGrid[cidx + 2].prev_pos = float2( prev_pos_x[cidx + 2], prev_pos_y[cidx + 2] );
+				pointGrid[cidx + 3].prev_pos = float2( prev_pos_x[cidx + 3], prev_pos_y[cidx + 3] );
 			}
 		}
 
 		// slowly increases the chance of anomalies
 		magic += 0.0002f;
-
-		for ( int y = 0; y < GRIDSIZE; y++ ) {
-			for ( int x = 0; x < GRIDSIZE; x++ ) {
-				int idx = x + y * GRIDSIZE;
-				float2 pointPos( pos_x[idx], pos_y[idx] );
-				grid( x, y ).pos = pointPos;
-				float2 prevPos( prev_pos_x[idx], prev_pos_y[idx] );
-				grid( x, y ).prev_pos = prevPos;
-			}
-		}
-
 		// apply constraints; 4 simulation steps: do not change this number.
 		for ( int i = 0; i < 4; i++ ) {
 			for ( int y = 1; y < GRIDSIZE - 1; y++ ) {
@@ -208,27 +238,25 @@ void Game::Simulation() {
 							float2 dir = neighbour.pos - pointpos;
 							pointpos += extra * dir * 0.5f;
 							neighbour.pos -= extra * dir * 0.5f;
+							int idx = ( x + xoffset[linknr] ) + ( y + yoffset[linknr] ) * GRIDSIZE;
+							pos_x[idx] = grid( x + xoffset[linknr], y + yoffset[linknr] ).pos.x;
+							pos_y[idx] = grid( x + xoffset[linknr], y + yoffset[linknr] ).pos.y;
 						}
 					}
 
 					grid( x, y ).pos = pointpos;
+					int idx = x + y * GRIDSIZE;
+					pos_x[idx] = grid( x, y ).pos.x;
+					pos_y[idx] = grid( x, y ).pos.y;
 				}
 			}
 
 			// fixed line of points is fixed.
 			for ( int x = 0; x < GRIDSIZE; x++ ) {
-				grid( x, 0 ).pos = grid( x, 0 ).fix;
-			}
-		}
-
-		// temporary fix, make sure the 4 simulation steps are saved properly to the SoA
-		for ( int y = 0; y < GRIDSIZE; y++ ) {
-			for ( int x = 0; x < GRIDSIZE; x++ ) {
-				int idx = x + y * GRIDSIZE;
-				pos_x[idx] = grid( x, y ).pos.x;
-				pos_y[idx] = grid( x, y ).pos.y;
-				prev_pos_x[idx] = grid( x, y ).prev_pos.x;
-				prev_pos_y[idx] = grid( x, y ).prev_pos.y;
+				float2 fix = grid( x, 0 ).fix;
+				grid( x, 0 ).pos = fix;
+				pos_x[x] = fix.x;
+				pos_y[x] = fix.y;
 			}
 		}
 	}
