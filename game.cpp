@@ -116,29 +116,6 @@ void Game::Init() {
 			}
 		}
 	}
-
-	// Conversion to SoA
-	for ( int y = 0; y < GRIDSIZE; y++ ) {
-		for ( int x = 0; x < GRIDSIZE; x++ ) {
-			int idx = x + y * GRIDSIZE;
-
-			pos_x[idx] = grid( x, y ).pos.x;
-			pos_y[idx] = grid( x, y ).pos.y;
-
-			prev_pos_x[idx] = grid( x, y ).prev_pos.x;
-			prev_pos_y[idx] = grid( x, y ).prev_pos.y;
-
-			fix_x[idx] = grid( x, y ).fix.x;
-			fix_y[idx] = grid( x, y ).fix.y;
-
-			is_fixed[idx] = grid( x, y ).fixed;
-
-			rest[idx + 0] = grid( x, y ).restlength[0];
-			rest[idx + 1] = grid( x, y ).restlength[1];
-			rest[idx + 2] = grid( x, y ).restlength[2];
-			rest[idx + 3] = grid( x, y ).restlength[3];
-		}
-	}
 }
 
 // cloth rendering
@@ -177,9 +154,9 @@ void Game::Simulation() {
 	// simulation is exected three times per frame; do not change this.
 	for( int steps = 0; steps < 3; steps++ ) {
 		// verlet integration; apply gravity
-		for (int y = 0; y < GRIDSIZE / 4; y++) {
-			for (int x = 0; x < GRIDSIZE; x++) {
-				int idx = x + y * GRIDSIZE;
+		for ( int y = 0; y < GRIDSIZE; y++ ) {
+			for ( int x = 0; x < GRIDSIZE / 4; x++ ) {
+				int idx = x + y * GRIDSIZE / 4;
 				//float2 curpos = grid( x, y ).pos;
 				__m128 curr_x4 = pos_x4[idx];
 				__m128 curr_y4 = pos_y4[idx];
@@ -203,60 +180,64 @@ void Game::Simulation() {
 				// do the addition
 				pos_x4[idx] = _mm_add_ps( curr_x4, rand_x );
 				pos_y4[idx] = _mm_add_ps( curr_y4, rand_y );
-				// copy back to AoS
-				int cidx = ( x + y * GRIDSIZE ) * 4;
-				pointGrid[cidx + 0].pos = float2( pos_x[cidx + 0], pos_y[cidx + 0] );
-				pointGrid[cidx + 1].pos = float2( pos_x[cidx + 1], pos_y[cidx + 1] );
-				pointGrid[cidx + 2].pos = float2( pos_x[cidx + 2], pos_y[cidx + 2] );
-				pointGrid[cidx + 3].pos = float2( pos_x[cidx + 3], pos_y[cidx + 3] );
-				pointGrid[cidx + 0].prev_pos = float2( prev_pos_x[cidx + 0], prev_pos_y[cidx + 0] );
-				pointGrid[cidx + 1].prev_pos = float2( prev_pos_x[cidx + 1], prev_pos_y[cidx + 1] );
-				pointGrid[cidx + 2].prev_pos = float2( prev_pos_x[cidx + 2], prev_pos_y[cidx + 2] );
-				pointGrid[cidx + 3].prev_pos = float2( prev_pos_x[cidx + 3], prev_pos_y[cidx + 3] );
 			}
 		}
 
 		// slowly increases the chance of anomalies
 		magic += 0.0002f;
-		// apply constraints; 4 simulation steps: do not change this number.
 		for ( int i = 0; i < 4; i++ ) {
 			for ( int y = 1; y < GRIDSIZE - 1; y++ ) {
-				for ( int x = 1; x < GRIDSIZE - 1; x++ ) {
-					float2 pointpos = grid( x, y ).pos;
-					// use springs to four neighbouring points
-					for ( int linknr = 0; linknr < 4; linknr++ ) {
-						Point& neighbour = grid( x + xoffset[linknr], y + yoffset[linknr] );
-						float distance = length( neighbour.pos - pointpos );
-						if ( !isfinite( distance ) ) {
-							// warning: this happens; sometimes vertex positions 'explode'.
-							continue;
+				for ( int x = 1; x < ( GRIDSIZE / 4 ) - 1; x++ ) {
+					int pidx = x + y * GRIDSIZE / 4;
+					// index for a 'spring'
+					int ridx = x * 4 + y * GRIDSIZE;
+					//printf( "%d - ", pidx );
+					//float2 pointpos = grid( x, y ).pos;
+					__m128 px4 = pos_x4[pidx];
+					__m128 py4 = pos_y4[pidx];
+					for ( int link = 0; link < 4; link++ ) {
+						int nidx = ( x + xoffset[link] ) + ( y + yoffset[link] ) * GRIDSIZE / 4;
+						//Point& neighbour = grid( x + xoffset[linknr], y + yoffset[linknr] );
+						__m128 nx4 = pos_x4[nidx];
+						__m128 ny4 = pos_y4[nidx];
+						//float2 dir = neighbour.pos - pointpos;
+						__m128 dx4 = _mm_sub_ps( nx4, px4 );
+						__m128 dy4 = _mm_sub_ps( ny4, py4 );
+						//float distance = length( neighbour.pos - pointpos );
+						__m128 dist4 = _mm_sqrt_ps( _mm_add_ps( _mm_mul_ps( dx4, dx4 ), _mm_mul_ps( dy4, dy4 ) ) );
+						float result[4];
+						_mm_store_ps( result, dist4 );
+						for ( int res = 0; res < 4; res++ ) {
+							printf( "%f\t", result[res] );
 						}
-
-						if ( distance > grid( x, y ).restlength[linknr] ) {
-							// pull points together
-							float extra = distance / ( grid( x, y ).restlength[linknr] ) - 1;
-							float2 dir = neighbour.pos - pointpos;
-							pointpos += extra * dir * 0.5f;
-							neighbour.pos -= extra * dir * 0.5f;
-							int idx = ( x + xoffset[linknr] ) + ( y + yoffset[linknr] ) * GRIDSIZE;
-							pos_x[idx] = grid( x + xoffset[linknr], y + yoffset[linknr] ).pos.x;
-							pos_y[idx] = grid( x + xoffset[linknr], y + yoffset[linknr] ).pos.y;
-						}
+						printf( "\n" );
+						// Create a mask using the restlength, rest4[ridx] has restlenth[link] for each of the four neighbours of the point
+						__m128 link4 = rest4[ridx + link];
+						__m128 mask = _mm_cmpgt_ps( dist4, link4 );
+						//float extra = distance / ( grid( x, y ).restlength[linknr] ) - 1;
+						// save some multiplications by multiplying the extra already with 0.5f instead of once for each point and neighbour
+						__m128 extra4 = _mm_mul_ps( _mm_sub_ps( _mm_div_ps( _mm_and_ps( mask, dist4 ), link4 ), one4 ), half4 );
+						//pointpos += extra * dir * 0.5f;
+						__m128 edx4 = _mm_mul_ps( extra4, dx4 );
+						__m128 edy4 = _mm_mul_ps( extra4, dy4 );
+						px4 = _mm_add_ps( px4, edx4 );
+						py4 = _mm_add_ps( py4, edy4 );
+						//neighbour.pos -= extra * dir * 0.5f;
+						pos_x4[nidx] = _mm_sub_ps( nx4, edx4 );
+						pos_y4[nidx] = _mm_sub_ps( ny4, edy4 );
 					}
 
-					grid( x, y ).pos = pointpos;
-					int idx = x + y * GRIDSIZE;
-					pos_x[idx] = grid( x, y ).pos.x;
-					pos_y[idx] = grid( x, y ).pos.y;
+					pos_x4[pidx] = px4;
+					pos_y4[pidx] = py4;
+					printf( "\n" );
 				}
 			}
 
 			// fixed line of points is fixed.
-			for ( int x = 0; x < GRIDSIZE; x++ ) {
-				float2 fix = grid( x, 0 ).fix;
-				grid( x, 0 ).pos = fix;
-				pos_x[x] = fix.x;
-				pos_y[x] = fix.y;
+			for ( int idx = 0; idx < GRIDSIZE / 4; idx++ ) {
+				//grid( x, 0 ).pos = fix;
+				pos_x4[idx] = fix_x4[idx];
+				pos_y4[idx] = fix_y4[idx];
 			}
 		}
 	}
