@@ -10,12 +10,22 @@ namespace Tmpl8
 class Game : public TheApp
 {
 public:
+	// openCL stuff
+	Kernel* gravity_kernel = 0;
+	Buffer* seed_buffer = 0;
+	Buffer* curr_position_buffer = 0;
+	Buffer* prev_position_buffer = 0;
 	// game flow methods
 	void Init();
 	void DrawGrid();
 	void Simulation();
 	void Tick( float deltaTime );
-	void Shutdown() { /* implement if you want to do something on exit */ }
+	void Shutdown() {
+		curr_position_buffer->~Buffer();
+		prev_position_buffer->~Buffer();
+		gravity_kernel->~Kernel();
+		Kernel::KillCL();
+	}
 	// input handling
 	void MouseUp( int ) { /* implement if you want to detect mouse button presses */ }
 	void MouseDown( int ) { /* implement if you want to detect mouse button presses */ }

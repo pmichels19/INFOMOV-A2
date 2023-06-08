@@ -147,6 +147,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="cl\kernels.cl" />
+    <None Include="kernels.cl" />
     <None Include="README.md" />
     <None Include="template\LICENSE" />
   </ItemGroup>

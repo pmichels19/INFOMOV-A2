@@ -35,14 +35,19 @@
 // Note that the GPGPU tasks will benefit from the SIMD tasks.
 // Also note that your final grade will be capped at 10.
 
-struct Point
-{
+struct Point {
 	float2 pos;				// current position of the point
 	float2 prev_pos;		// position of the point in the previous frame
 	float2 fix;				// stationary position; used for the top line of points
 	bool fixed;				// true if this is a point in the top line of the cloth
 	float restlength[4];	// initial distance to neighbours
 };
+
+static uint seeds[GRIDSIZE * GRIDSIZE];
+static float2 positions[GRIDSIZE * GRIDSIZE];
+static float2 previous_positions[GRIDSIZE * GRIDSIZE];
+static float2 fix[GRIDSIZE * GRIDSIZE];
+static float4 restlength[GRIDSIZE * GRIDSIZE];
 
 // grid access convenience
 Point* pointGrid = new Point[GRIDSIZE * GRIDSIZE];
@@ -53,22 +58,38 @@ int xoffset[4] = { 1, -1, 0, 0 }, yoffset[4] = { 0, 0, 1, -1 };
 
 // initialization
 void Game::Init() {
+	// Initialize OpenCL
+	if ( !gravity_kernel ) {
+		Kernel::InitCL();
+		gravity_kernel = new Kernel( "kernels.cl", "apply_gravity" );
+		seed_buffer = new Buffer( GRIDSIZE * GRIDSIZE * sizeof( uint ), seeds );
+		curr_position_buffer = new Buffer( GRIDSIZE * GRIDSIZE * 2 * sizeof( float ), positions );
+		prev_position_buffer = new Buffer( GRIDSIZE * GRIDSIZE * 2 * sizeof( float ), previous_positions );
+	}
+
 	// create the cloth
-	for (int y = 0; y < GRIDSIZE; y++) for (int x = 0; x < GRIDSIZE; x++) {
-		grid( x, y ).pos.x = 10 + (float)x * ((SCRWIDTH - 100) / GRIDSIZE) + y * 0.9f + Rand( 2 );
-		grid( x, y ).pos.y = 10 + (float)y * ((SCRHEIGHT - 180) / GRIDSIZE) + Rand( 2 );
-		grid( x, y ).prev_pos = grid( x, y ).pos; // all points start stationary
-		if (y == 0) {
-			grid( x, y ).fixed = true;
-			grid( x, y ).fix = grid( x, y ).pos;
-		} else {
-			grid( x, y ).fixed = false;
+	for ( int y = 0; y < GRIDSIZE; y++ ) {
+		for ( int x = 0; x < GRIDSIZE; x++ ) {
+			int idx = x + y * GRIDSIZE;
+			positions[idx].x = 10 + (float) x * ( ( SCRWIDTH - 100 ) / GRIDSIZE ) + y * 0.9f + Rand( 2 );
+			positions[idx].y = 10 + (float) y * ( ( SCRHEIGHT - 180 ) / GRIDSIZE ) + Rand( 2 );
+			previous_positions[idx] = positions[idx];
+			seeds[idx] = idx + 1;
+
+			if ( y == 0 ) {
+				fix[idx] = positions[idx];
+			}
 		}
 	}
-	for (int y = 1; y < GRIDSIZE - 1; y++) for (int x = 1; x < GRIDSIZE - 1; x++) {
-		// calculate and store distance to four neighbours, allow 15% slack
-		for (int c = 0; c < 4; c++) {
-			grid( x, y ).restlength[c] = length( grid( x, y ).pos - grid( x + xoffset[c], y + yoffset[c] ).pos ) * 1.15f;
+
+	for ( int y = 1; y < GRIDSIZE - 1; y++ ) {
+		for ( int x = 1; x < GRIDSIZE - 1; x++ ) {
+			int pidx = x + y * GRIDSIZE;
+			
+			for ( int c = 0; c < 4; c++ ) {
+				int nidx = ( x + xoffset[c] ) + ( y + yoffset[c] ) * GRIDSIZE;
+				restlength[pidx][c] = length( positions[pidx] - positions[nidx]) * 1.15f;
+			}
 		}
 	}
 }
@@ -81,16 +102,16 @@ void Game::DrawGrid() {
 	// draw the grid
 	screen->Clear( 0 );
 	for (int y = 0; y < (GRIDSIZE - 1); y++) for (int x = 1; x < (GRIDSIZE - 2); x++) {
-		const float2 p1 = grid( x, y ).pos;
-		const float2 p2 = grid( x + 1, y ).pos;
-		const float2 p3 = grid( x, y + 1 ).pos;
+		const float2 p1 = positions[( x + 0 ) + ( y + 0 ) * GRIDSIZE];
+		const float2 p2 = positions[( x + 1 ) + ( y + 0 ) * GRIDSIZE];
+		const float2 p3 = positions[( x + 0 ) + ( y + 1 ) * GRIDSIZE];
 		screen->Line( p1.x, p1.y, p2.x, p2.y, 0xffffff );
 		screen->Line( p1.x, p1.y, p3.x, p3.y, 0xffffff );
 	}
 
 	for (int y = 0; y < (GRIDSIZE - 1); y++) {
-		const float2 p1 = grid( GRIDSIZE - 2, y ).pos;
-		const float2 p2 = grid( GRIDSIZE - 2, y + 1 ).pos;
+		const float2 p1 = positions[( GRIDSIZE - 2 ) + ( y + 0 ) * GRIDSIZE];
+		const float2 p2 = positions[( GRIDSIZE - 2 ) + ( y + 1 ) * GRIDSIZE];
 		screen->Line( p1.x, p1.y, p2.x, p2.y, 0xffffff );
 	}
 }
@@ -106,40 +127,48 @@ void Game::Simulation() {
 	// simulation is exected three times per frame; do not change this.
 	for( int steps = 0; steps < 3; steps++ ) {
 		// verlet integration; apply gravity
-		for (int y = 0; y < GRIDSIZE; y++) for (int x = 0; x < GRIDSIZE; x++) {
-			float2 curpos = grid( x, y ).pos, prevpos = grid( x, y ).prev_pos;
-			grid( x, y ).pos += (curpos - prevpos) + float2( 0, 0.003f ); // gravity
-			grid( x, y ).prev_pos = curpos;
-			if (Rand( 10 ) < 0.03f) grid( x, y ).pos += float2( Rand( 0.02f + magic ), Rand( 0.12f ) );
-		}
+		seed_buffer->CopyToDevice();
+		curr_position_buffer->CopyToDevice();
+		prev_position_buffer->CopyToDevice();
+
+		gravity_kernel->SetArguments( GRIDSIZE, magic, curr_position_buffer, prev_position_buffer, seed_buffer );
+		gravity_kernel->Run( GRIDSIZE * GRIDSIZE );
+
+		seed_buffer->CopyFromDevice();
+		curr_position_buffer->CopyFromDevice();
+		prev_position_buffer->CopyFromDevice( true );
+		//	if (Rand( 10 ) < 0.03f) positions[idx] += float2(Rand(0.02f + magic), Rand(0.12f));
 
 		magic += 0.0002f; // slowly increases the chance of anomalies
 		// apply constraints; 4 simulation steps: do not change this number.
 		for (int i = 0; i < 4; i++) {
 			for (int y = 1; y < GRIDSIZE - 1; y++) for (int x = 1; x < GRIDSIZE - 1; x++) {
-				float2 pointpos = grid( x, y ).pos;
+				int pidx = x + y * GRIDSIZE;
+				float2 pointpos = positions[pidx];
 				// use springs to four neighbouring points
 				for (int linknr = 0; linknr < 4; linknr++) {
-					Point& neighbour = grid( x + xoffset[linknr], y + yoffset[linknr] );
-					float distance = length( neighbour.pos - pointpos );
+					int nidx = ( x + xoffset[linknr] ) + ( y + yoffset[linknr] ) * GRIDSIZE;
+					float distance = length( positions[nidx] - pointpos);
 					if (!isfinite( distance )) {
 						// warning: this happens; sometimes vertex positions 'explode'.
 						continue;
 					}
 
-					if (distance > grid( x, y ).restlength[linknr]) {
+					if (distance > restlength[pidx][linknr]) {
 						// pull points together
-						float extra = distance / (grid( x, y ).restlength[linknr]) - 1;
-						float2 dir = neighbour.pos - pointpos;
+						float extra = distance / ( restlength[pidx][linknr] ) - 1;
+						float2 dir = positions[nidx] - pointpos;
 						pointpos += extra * dir * 0.5f;
-						neighbour.pos -= extra * dir * 0.5f;
+						positions[nidx] -= extra * dir * 0.5f;
 					}
 				}
 
-				grid( x, y ).pos = pointpos;
+				positions[pidx] = pointpos;
 			}
 			// fixed line of points is fixed.
-			for (int x = 0; x < GRIDSIZE; x++) grid( x, 0 ).pos = grid( x, 0 ).fix;
+			for (int x = 0; x < GRIDSIZE; x++) {
+				positions[x] = fix[x];
+			}
 		}
 	}
 }
