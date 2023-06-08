@@ -57,6 +57,8 @@ static union { float fix_y[GRIDSIZE * GRIDSIZE]; __m128 fix_y4[GRIDSIZE * GRIDSI
 static bool is_fixed[GRIDSIZE * GRIDSIZE];
 // Initial distances to neighbours
 static union { float rest[GRIDSIZE * GRIDSIZE * 4]; __m128 rest4[GRIDSIZE * GRIDSIZE]; };
+// Mapping from x, y standard point indices to SoA indices
+static int mapping[GRIDSIZE * GRIDSIZE];
 
 // grid access convenience
 Point* pointGrid = new Point[GRIDSIZE * GRIDSIZE];
@@ -89,7 +91,7 @@ void Game::Init() {
 	// Conversion to SoA
 	for ( int y = 0; y < GRIDSIZE; y++ ) {
 		// divide into groups of four, each of size GRIDSIZE / 4
-		// data layout in quadfloats e.g. for idx 2: **[*]*****|**[*]*****|**[*]*****|**[*]*****
+		// data layout in quadfloats e.g. for idx 2: **[*]*...****|**[*]*...****|**[*]*...****|**[*]*...****
 		for ( int x = 0; x < GRIDSIZE / 4; x++ ) {
 			for ( int g = 0; g < 4; g++ ) {
 				int base_idx = x * 4 + y * GRIDSIZE;
@@ -97,6 +99,7 @@ void Game::Init() {
 
 				int x_point = x + g * ( GRIDSIZE / 4 );
 				Point& point = grid( x_point, y );
+				mapping[x_point + y * GRIDSIZE] = soa_idx;
 
 				pos_x[soa_idx] = point.pos.x;
 				pos_y[soa_idx] = point.pos.y;
@@ -125,19 +128,22 @@ void Game::Init() {
 void Game::DrawGrid() {
 	// draw the grid
 	screen->Clear( 0 );
-	for ( int y = 0; y < ( GRIDSIZE - 1 ); y++ ) for ( int x = 1; x < ( GRIDSIZE - 2 ); x++ ) {
-		int idx1 = x + y * GRIDSIZE;
-		int idx2 = ( x + 1 ) + y * GRIDSIZE;
-		int idx3 = x + ( y + 1 ) * GRIDSIZE;
-		screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx2], pos_y[idx2], 0xffffff );
-		screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx3], pos_y[idx3], 0xffffff );
-	}
 	for ( int y = 0; y < ( GRIDSIZE - 1 ); y++ ) {
-		int idx1 = ( GRIDSIZE - 2 ) + y * GRIDSIZE;
-		int idx2 = ( GRIDSIZE - 2 ) + ( y + 1 ) * GRIDSIZE;
+		for ( int x = 1; x < ( GRIDSIZE - 2 ); x++ ) {
+			int idx1 = mapping[x + y * GRIDSIZE];
+			int idx2 = mapping[( x + 1 ) + y * GRIDSIZE];
+			int idx3 = mapping[x + ( y + 1 ) * GRIDSIZE];
+			screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx2], pos_y[idx2], 0xffffff );
+			screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx3], pos_y[idx3], 0xffffff );
+		}
+	}
+
+	for ( int y = 0; y < ( GRIDSIZE - 1 ); y++ ) {
+		int idx1 = mapping[( GRIDSIZE - 2 ) + y * GRIDSIZE];
+		int idx2 = mapping[( GRIDSIZE - 2 ) + ( y + 1 ) * GRIDSIZE];
 		screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx2], pos_y[idx2], 0xffffff );
 	}
-}
+}\
 
 // cloth simulation
 // This function implements Verlet integration (see notes at top of file).
@@ -146,10 +152,57 @@ void Game::DrawGrid() {
 // when using SIMD, this will only work if the two vertices are not
 // operated upon simultaneously (in a vector register, or in a warp).
 float magic = 0.11f;
-__m128 gravity4 = _mm_set1_ps( 0.003f );
+__m128 gravity4 = _mm_set1_ps( 0.00000003f );
 __m128 magic_chance4 = _mm_set1_ps( 0.03f );
 __m128 one4 = _mm_set1_ps( 1 );
 __m128 half4 = _mm_set1_ps( 0.5f );
+void resolveSprings( int pidx, int nidx, int sidx ) {
+	//float2 pointpos = grid( x, y ).pos;
+	__m128 px4 = pos_x4[pidx];
+	__m128 py4 = pos_y4[pidx];
+	//Point& neighbour = grid( x + xoffset[linknr], y + yoffset[linknr] );
+	__m128 nx4 = pos_x4[nidx];
+	__m128 ny4 = pos_y4[nidx];
+	//float2 dir = neighbour.pos - pointpos;
+	__m128 dx4 = _mm_sub_ps( nx4, px4 );
+	__m128 dy4 = _mm_sub_ps( ny4, py4 );
+	//float distance = length( neighbour.pos - pointpos );
+	__m128 dist4 = _mm_sqrt_ps( _mm_add_ps( _mm_mul_ps( dx4, dx4 ), _mm_mul_ps( dy4, dy4 ) ) );
+
+	/*float result[4];
+	_mm_store_ps( result, dist4 );
+	printf( "dist4: %f\t\t%f\t\t%f\t\t%f\n", result[0], result[1], result[2], result[3] );
+	_mm_store_ps( result, rest4[sidx] );
+	printf( "rest4: %f\t\t%f\t\t%f\t\t%f\n", result[0], result[1], result[2], result[3] );*/
+
+	// Create a mask using the restlength, rest4[ridx] has restlenth[link] for each of the four neighbours of the point
+	__m128 mask = _mm_andnot_ps( _mm_cmpord_ps( dist4, dist4 ), _mm_cmpgt_ps( dist4, rest4[sidx] ) );
+
+	/*_mm_store_ps( result, _mm_cmpgt_ps( dist4, rest4[sidx] ) );
+	printf( "dmask: %f\t\t%f\t\t%f\t\t%f\n", result[0], result[1], result[2], result[3] );
+	_mm_store_ps( result, mask );
+	printf( "fmask: %f\t\t%f\t\t%f\t\t%f\n\n", result[0], result[1], result[2], result[3] );*/
+
+	dist4 = _mm_blendv_ps( _mm_setzero_ps(), dist4, mask );
+	dx4 = _mm_blendv_ps( _mm_setzero_ps(), dx4, mask );
+	dy4 = _mm_blendv_ps( _mm_setzero_ps(), dy4, mask );
+	__m128 ones4 = _mm_blendv_ps( _mm_setzero_ps(), one4, mask );
+	//float extra = distance / ( grid( x, y ).restlength[linknr] ) - 1;
+	__m128 extra4 = _mm_sub_ps( _mm_div_ps( dist4, rest4[sidx] ), ones4 );
+	// save some multiplications by multiplying the extra already with 0.5f instead of once for each point and neighbour
+	extra4 = _mm_mul_ps( extra4, half4 );
+	//pointpos += extra * dir * 0.5f;
+	__m128 edx4 = _mm_mul_ps( extra4, dx4 );
+	__m128 edy4 = _mm_mul_ps( extra4, dy4 );
+
+	//neighbour.pos -= extra * dir * 0.5f;
+	pos_x4[nidx] = _mm_sub_ps( nx4, edx4 );
+	pos_y4[nidx] = _mm_sub_ps( ny4, edy4 );
+	//grid( x, 0 ).pos = pointpos;
+	pos_x4[pidx] = _mm_add_ps( px4, edx4 );
+	pos_y4[pidx] = _mm_add_ps( py4, edy4 );
+}
+
 void Game::Simulation() {
 	// simulation is exected three times per frame; do not change this.
 	for( int steps = 0; steps < 3; steps++ ) {
@@ -186,50 +239,27 @@ void Game::Simulation() {
 		// slowly increases the chance of anomalies
 		magic += 0.0002f;
 		for ( int i = 0; i < 4; i++ ) {
+			// do horizontal neighbours
 			for ( int y = 1; y < GRIDSIZE - 1; y++ ) {
-				for ( int x = 1; x < ( GRIDSIZE / 4 ) - 1; x++ ) {
+				for ( int x = 0; x < ( GRIDSIZE / 4 ) - 1; x++ ) {
+					// current 4 points and the neighbours to the right
 					int pidx = x + y * GRIDSIZE / 4;
-					// index for a 'spring'
-					int ridx = x * 4 + y * GRIDSIZE;
-					//printf( "%d - ", pidx );
-					//float2 pointpos = grid( x, y ).pos;
-					__m128 px4 = pos_x4[pidx];
-					__m128 py4 = pos_y4[pidx];
-					for ( int link = 0; link < 4; link++ ) {
-						int nidx = ( x + xoffset[link] ) + ( y + yoffset[link] ) * GRIDSIZE / 4;
-						//Point& neighbour = grid( x + xoffset[linknr], y + yoffset[linknr] );
-						__m128 nx4 = pos_x4[nidx];
-						__m128 ny4 = pos_y4[nidx];
-						//float2 dir = neighbour.pos - pointpos;
-						__m128 dx4 = _mm_sub_ps( nx4, px4 );
-						__m128 dy4 = _mm_sub_ps( ny4, py4 );
-						//float distance = length( neighbour.pos - pointpos );
-						__m128 dist4 = _mm_sqrt_ps( _mm_add_ps( _mm_mul_ps( dx4, dx4 ), _mm_mul_ps( dy4, dy4 ) ) );
-						float result[4];
-						_mm_store_ps( result, dist4 );
-						for ( int res = 0; res < 4; res++ ) {
-							printf( "%f\t", result[res] );
-						}
-						printf( "\n" );
-						// Create a mask using the restlength, rest4[ridx] has restlenth[link] for each of the four neighbours of the point
-						__m128 link4 = rest4[ridx + link];
-						__m128 mask = _mm_cmpgt_ps( dist4, link4 );
-						//float extra = distance / ( grid( x, y ).restlength[linknr] ) - 1;
-						// save some multiplications by multiplying the extra already with 0.5f instead of once for each point and neighbour
-						__m128 extra4 = _mm_mul_ps( _mm_sub_ps( _mm_div_ps( _mm_and_ps( mask, dist4 ), link4 ), one4 ), half4 );
-						//pointpos += extra * dir * 0.5f;
-						__m128 edx4 = _mm_mul_ps( extra4, dx4 );
-						__m128 edy4 = _mm_mul_ps( extra4, dy4 );
-						px4 = _mm_add_ps( px4, edx4 );
-						py4 = _mm_add_ps( py4, edy4 );
-						//neighbour.pos -= extra * dir * 0.5f;
-						pos_x4[nidx] = _mm_sub_ps( nx4, edx4 );
-						pos_y4[nidx] = _mm_sub_ps( ny4, edy4 );
-					}
+					int nidx = pidx + 1;
+					// spring/rest length index
+					int sidx = x * 4 + y * GRIDSIZE;
+					resolveSprings( pidx, nidx, sidx );
+				}
+			}
 
-					pos_x4[pidx] = px4;
-					pos_y4[pidx] = py4;
-					printf( "\n" );
+			// do vertical neighbours
+			for ( int y = 0; y < GRIDSIZE - 1; y++ ) {
+				for ( int x = 0; x < GRIDSIZE / 4; x++ ) {
+					// current 4 points and the neighbours under them
+					int pidx = x + y * GRIDSIZE / 4;
+					int nidx = x + ( y + 1 ) * GRIDSIZE / 4;
+					// spring/rest length index
+					int sidx = x * 4 + y * GRIDSIZE + 3;
+					resolveSprings( pidx, nidx, sidx );
 				}
 			}
 
