@@ -74,7 +74,7 @@ void Game::Init() {
 			positions[idx].x = 10 + (float) x * ( ( SCRWIDTH - 100 ) / GRIDSIZE ) + y * 0.9f + Rand( 2 );
 			positions[idx].y = 10 + (float) y * ( ( SCRHEIGHT - 180 ) / GRIDSIZE ) + Rand( 2 );
 			previous_positions[idx] = positions[idx];
-			seeds[idx] = idx + 1;
+			seeds[idx] = RandomUInt() + 1;
 
 			if ( y == 0 ) {
 				fix[idx] = positions[idx];
