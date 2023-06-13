@@ -122,9 +122,6 @@ void Game::Init() {
 }
 
 // cloth rendering
-// NOTE: For this assignment, please do not attempt to render directly on
-// the GPU. Instead, if you use GPGPU, retrieve simulation results each frame
-// and render using the function below. Do not modify / optimize it.
 void Game::DrawGrid() {
 	// draw the grid
 	screen->Clear( 0 );
