@@ -143,7 +143,7 @@ void Game::DrawGrid() {
 		int idx2 = mapping[( GRIDSIZE - 2 ) + ( y + 1 ) * GRIDSIZE];
 		screen->Line( pos_x[idx1], pos_y[idx1], pos_x[idx2], pos_y[idx2], 0xffffff );
 	}
-}\
+}
 
 // cloth simulation
 // This function implements Verlet integration (see notes at top of file).
