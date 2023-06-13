@@ -238,38 +238,6 @@ void Game::Simulation() {
 
 		// slowly increases the chance of anomalies
 		magic += 0.0002f;
-		for ( int i = 0; i < 4; i++ ) {
-			// do horizontal neighbours
-			for ( int y = 1; y < GRIDSIZE - 1; y++ ) {
-				for ( int x = 0; x < ( GRIDSIZE / 4 ) - 1; x++ ) {
-					// current 4 points and the neighbours to the right
-					int pidx = x + y * GRIDSIZE / 4;
-					int nidx = pidx + 1;
-					// spring/rest length index
-					int sidx = x * 4 + y * GRIDSIZE;
-					resolveSprings( pidx, nidx, sidx );
-				}
-			}
-
-			// do vertical neighbours
-			for ( int y = 0; y < GRIDSIZE - 1; y++ ) {
-				for ( int x = 0; x < GRIDSIZE / 4; x++ ) {
-					// current 4 points and the neighbours under them
-					int pidx = x + y * GRIDSIZE / 4;
-					int nidx = x + ( y + 1 ) * GRIDSIZE / 4;
-					// spring/rest length index
-					int sidx = x * 4 + y * GRIDSIZE + 3;
-					resolveSprings( pidx, nidx, sidx );
-				}
-			}
-
-			// fixed line of points is fixed.
-			for ( int idx = 0; idx < GRIDSIZE / 4; idx++ ) {
-				//grid( x, 0 ).pos = fix;
-				pos_x4[idx] = fix_x4[idx];
-				pos_y4[idx] = fix_y4[idx];
-			}
-		}
 	}
 }
 
