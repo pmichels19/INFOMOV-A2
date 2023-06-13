@@ -169,19 +169,8 @@ void resolveSprings( int pidx, int nidx, int sidx ) {
 	//float distance = length( neighbour.pos - pointpos );
 	__m128 dist4 = _mm_sqrt_ps( _mm_add_ps( _mm_mul_ps( dx4, dx4 ), _mm_mul_ps( dy4, dy4 ) ) );
 
-	/*float result[4];
-	_mm_store_ps( result, dist4 );
-	printf( "dist4: %f\t\t%f\t\t%f\t\t%f\n", result[0], result[1], result[2], result[3] );
-	_mm_store_ps( result, rest4[sidx] );
-	printf( "rest4: %f\t\t%f\t\t%f\t\t%f\n", result[0], result[1], result[2], result[3] );*/
-
 	// Create a mask using the restlength, rest4[ridx] has restlenth[link] for each of the four neighbours of the point
 	__m128 mask = _mm_andnot_ps( _mm_cmpord_ps( dist4, dist4 ), _mm_cmpgt_ps( dist4, rest4[sidx] ) );
-
-	/*_mm_store_ps( result, _mm_cmpgt_ps( dist4, rest4[sidx] ) );
-	printf( "dmask: %f\t\t%f\t\t%f\t\t%f\n", result[0], result[1], result[2], result[3] );
-	_mm_store_ps( result, mask );
-	printf( "fmask: %f\t\t%f\t\t%f\t\t%f\n\n", result[0], result[1], result[2], result[3] );*/
 
 	dist4 = _mm_blendv_ps( _mm_setzero_ps(), dist4, mask );
 	dx4 = _mm_blendv_ps( _mm_setzero_ps(), dx4, mask );
